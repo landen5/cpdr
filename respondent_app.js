@@ -1,20 +1,28 @@
-/**
- * A simple CSV parser to convert CSV text into an array of objects.
- */
-function parseCSV(csvText) {
-    const lines = csvText.trim().split('\n');
-    const headers = lines[0].split(',').map(header => header.trim());
+// **FIX**: A more robust CSV parser that can handle commas within quoted item titles.
+function robustParseCSV(csvText) {
     const data = [];
-
-    for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const values = lines[i].split(',');
-        const rowObject = {};
-        for (let j = 0; j < headers.length; j++) {
-            rowObject[headers[j]] = values[j] ? values[j].trim() : '';
+    const lines = csvText.trim().split('\n');
+    // Remove the header line to process it separately
+    const headers = lines.shift().split(',').map(h => h.trim());
+    
+    lines.forEach(line => {
+        if (!line.trim()) return; // Skip empty lines
+        const row = {};
+        
+        // This regular expression is the key. It splits by commas, but ignores commas inside double quotes.
+        const values = line.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+        
+        for(let i = 0; i < headers.length; i++) {
+            // Check if header and value exist to avoid errors on malformed rows
+            if (headers[i] && values[i]) {
+                let value = values[i];
+                // Remove the surrounding quotes from the value if they exist
+                value = value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+                row[headers[i]] = value.trim();
+            }
         }
-        data.push(rowObject);
-    }
+        data.push(row);
+    });
     return data;
 }
 
@@ -22,15 +30,20 @@ function parseCSV(csvText) {
 async function createPlot() {
     const response = await fetch("cpdr_published_cases.csv");
     const csvText = await response.text();
-    let data = parseCSV(csvText);
+    // **FIX**: Use the new, robust parser
+    let data = robustParseCSV(csvText);
+
+    // This variable controls how many nations to display
+    const numberOfNationsToShow = 10;
 
     const startYear = 1980;
+    // Analyze the 'respondent_nation' column
     data = data.filter(d => d['respondent_nation']);
 
     const nationCounts = {};
     data.forEach(d => {
         const nation = d['respondent_nation'];
-        const nations = nation.split(',').map(n => n.trim());
+        const nations = (nation || '').split(',').map(n => n.trim());
         nations.forEach(n => {
             if (n) {
                 nationCounts[n] = (nationCounts[n] || 0) + 1;
@@ -40,8 +53,10 @@ async function createPlot() {
 
     const topNations = Object.entries(nationCounts)
         .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
+        .slice(0, numberOfNationsToShow)
         .map(([nation]) => nation);
+
+    console.log(`Top ${numberOfNationsToShow} Respondent Nations:`, topNations);
 
     const filteredData = data.filter(d => {
         const year = parseInt(d['year_claim_resolved']);
@@ -50,9 +65,8 @@ async function createPlot() {
 
     const claimsByYear = new Map();
     filteredData.forEach(d => {
-        const nations = d['respondent_nation'].split(',').map(n => n.trim());
+        const nations = (d['respondent_nation'] || '').split(',').map(n => n.trim());
         const year = parseInt(d['year_claim_resolved']);
-
         nations.forEach(nation => {
             if (topNations.includes(nation)) {
                 if (!claimsByYear.has(nation)) claimsByYear.set(nation, new Map());
@@ -111,7 +125,6 @@ async function createPlot() {
         hovermode: 'x unified',
         legend: {
             traceorder: 'normal',
-            // **FIX: Add a title to the legend (the key)**
             title: {
                 text: 'Respondent Nation'
             }
